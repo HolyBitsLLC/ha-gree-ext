@@ -187,6 +187,11 @@ class GreeClimateEntity(GreeEntity, ClimateEntity):
             self._attr_name,
         )
 
+        # We always report in Celsius, so ensure the device's internal
+        # temperature_units is set to Celsius before calling the setter.
+        # This prevents greeclimate from interpreting our Celsius value as
+        # Fahrenheit when the physical remote was set to F mode.
+        self.coordinator.device.temperature_units = 0  # TemperatureUnits.C
         self.coordinator.device.target_temperature = temperature
         await self.coordinator.push_state_update()
         self.async_write_ha_state()

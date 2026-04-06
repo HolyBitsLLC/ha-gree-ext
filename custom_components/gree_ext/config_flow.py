@@ -83,7 +83,7 @@ class GreeExtConfigFlow(ConfigFlow, domain=DOMAIN):
     @callback
     def async_get_options_flow(config_entry) -> GreeExtOptionsFlow:
         """Return the options flow handler."""
-        return GreeExtOptionsFlow(config_entry)
+        return GreeExtOptionsFlow()
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
@@ -133,10 +133,6 @@ class GreeExtConfigFlow(ConfigFlow, domain=DOMAIN):
 
 class GreeExtOptionsFlow(OptionsFlow):
     """Options flow to add/remove device IPs after initial setup."""
-
-    def __init__(self, config_entry) -> None:
-        """Initialize options flow."""
-        self.config_entry = config_entry
 
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
