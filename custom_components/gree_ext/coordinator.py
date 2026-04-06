@@ -7,6 +7,7 @@ not part of the standard Props enum.
 
 from __future__ import annotations
 
+import asyncio
 import copy
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -85,6 +86,7 @@ class DeviceDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             always_update=False,
         )
         self.device = device
+        self.device.add_handler(Response.DATA, self.device_state_updated)
         self.device.add_handler(Response.RESULT, self.device_state_updated)
 
         self._error_count: int = 0
@@ -106,14 +108,34 @@ class DeviceDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self.async_set_updated_data(self.device.raw_properties)
 
     async def _async_update_data(self) -> dict[str, Any]:
-        """Update the state of the device."""
+        """Update the state of the device.
+
+        Sends a SINGLE combined status request that includes both the
+        standard greeclimate properties AND our extended properties
+        (compressor freq, coil temps).  This avoids the timing issues of
+        sending two separate requests.
+        """
         _LOGGER.debug(
             "Updating device state: %s, error count: %d",
             self.name,
             self._error_count,
         )
+
         try:
-            await self.device.update_state()
+            if not self.device.device_cipher:
+                await self.device.bind()
+
+            # Build a combined property list: standard + extended.
+            props = [x.value for x in Props]
+            if not self.device.hid:
+                props.append("hid")
+            props.extend(EXTENDED_PROPERTIES)
+
+            await self.device.send(
+                self.device.create_status_message(
+                    self.device.device_info, *props
+                )
+            )
         except DeviceNotBoundError as error:
             raise UpdateFailed(
                 f"Device {self.name} is unavailable, device is not bound."
@@ -130,6 +152,11 @@ class DeviceDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     f"Device {self.name} is unavailable, could not send update request"
                 ) from error
         else:
+            # Wait for the device to respond.  The response fires
+            # handle_state_update synchronously within datagram_received,
+            # which updates device._properties.
+            await asyncio.sleep(1)
+
             now = utcnow()
             elapsed_success = now - self._last_response_time
             if self.update_interval and elapsed_success >= timedelta(
@@ -155,67 +182,33 @@ class DeviceDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
         self._last_response_time = utcnow()
 
-        # Fetch extended properties in a separate status request.
-        await self._fetch_extended_properties()
+        # Extract extended properties from the combined response.
+        # greeclimate's handle_state_update stores ALL received key-value
+        # pairs in device._properties, so our extended properties are there.
+        self._extract_extended_from_raw()
 
         return copy.deepcopy(self.device.raw_properties)
 
-    async def _fetch_extended_properties(self) -> None:
-        """Request extended protocol properties from the device.
+    def _extract_extended_from_raw(self) -> None:
+        """Pull extended property values from raw_properties after update.
 
-        Uses the same create_status_message / send mechanism as the standard
-        update, but asks for our additional property names.  Results are
-        captured via the RESULT handler and merged into extended_properties.
+        After a combined status request, the device's response includes both
+        standard and extended properties in _properties.  Extract and normalise
+        the extended ones into self.extended_properties.
         """
-        if not self.device.device_cipher:
+        raw = self.device.raw_properties
+        if not raw:
             return
 
-        try:
-            # Build a status message requesting only the extended properties.
-            msg = self.device.create_status_message(
-                self.device.device_info, *EXTENDED_PROPERTIES
-            )
-            # We temporarily intercept the state-update handler to capture
-            # the response for our custom properties.
-            captured: dict[str, Any] = {}
-
-            def _capture_extended(*args: Any) -> None:
-                if args and isinstance(args[0], dict):
-                    captured.update(args[0])
-
-            self.device.add_handler(Response.DATA, _capture_extended)
-            try:
-                await self.device.send(msg)
-                # Give the device a brief moment to respond. The result
-                # handler fires synchronously within datagram_received.
-                import asyncio
-
-                await asyncio.sleep(0.5)
-            finally:
-                self.device.remove_handler(Response.DATA, _capture_extended)
-
-            if captured:
-                # Normalise alias names to canonical keys so consumers
-                # don't need to know which alias the device responded with.
-                normalised = self._normalise_aliases(captured)
-                self.extended_properties.update(normalised)
-                self._detect_firmware_version(normalised)
-                _LOGGER.debug(
-                    "Extended properties for %s (fw_v4=%s): %s",
-                    self.name,
-                    self._firmware_is_v4,
-                    self.extended_properties,
-                )
-        except (DeviceTimeoutError, DeviceNotBoundError):
+        normalised = self._normalise_aliases(raw)
+        if normalised:
+            self.extended_properties.update(normalised)
+            self._detect_firmware_version(normalised)
             _LOGGER.debug(
-                "Could not fetch extended properties for %s (timeout/not bound)",
+                "Extended properties for %s (fw_v4=%s): %s",
                 self.name,
-            )
-        except Exception:  # noqa: BLE001
-            _LOGGER.debug(
-                "Unexpected error fetching extended properties for %s",
-                self.name,
-                exc_info=True,
+                self._firmware_is_v4,
+                self.extended_properties,
             )
 
     @staticmethod

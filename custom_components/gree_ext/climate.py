@@ -11,15 +11,12 @@ from typing import Any
 
 from greeclimate.device import (
     TEMP_MAX,
-    TEMP_MAX_F,
     TEMP_MIN,
-    TEMP_MIN_F,
     TEMP_OFFSET as GR_TEMP_OFFSET,
     FanSpeed,
     HorizontalSwing,
     Mode,
     Props,
-    TemperatureUnits,
     VerticalSwing,
 )
 
@@ -143,12 +140,16 @@ class GreeClimateEntity(GreeEntity, ClimateEntity):
 
     @property
     def current_temperature(self) -> float | None:
-        """Return the reported current temperature for the device.
+        """Return the reported current temperature in °C.
 
-        Overrides greeclimate's own value because some firmware versions
-        report a v4-style hid string but still encode TemSen with the +40
-        offset.  We apply a reliable heuristic: any raw value >= 40 is
-        assumed to use the offset convention (no room is realistically 40 °C).
+        We ALWAYS return Celsius regardless of what TemUn says, because the
+        raw TemSen value from the device is always Celsius-based (with or
+        without the +40 offset).  ``_attr_temperature_unit`` is locked to
+        CELSIUS so HA handles the display conversion to °F if the user
+        prefers that.
+
+        Heuristic: any raw TemSen >= TEMP_OFFSET (40) is assumed to carry
+        the legacy +40 offset.  Values < 40 are treated as raw °C.
         """
         device = self.coordinator.device
         raw = device.get_property(Props.TEMP_SENSOR)
@@ -157,19 +158,8 @@ class GreeClimateEntity(GreeEntity, ClimateEntity):
 
         # Values >= TEMP_OFFSET always use the +40 convention.
         if raw >= GR_TEMP_OFFSET:
-            celsius = raw - GR_TEMP_OFFSET
-        else:
-            celsius = raw
-
-        # If the unit is set to Fahrenheit, convert via greeclimate's table.
-        if device.temperature_units == TemperatureUnits.F.value:
-            bit = device.get_property(Props.TEMP_BIT) or 0
-            try:
-                return device._convert_to_units(celsius, bit)
-            except (ValueError, StopIteration):
-                pass
-
-        return float(celsius)
+            return float(raw - GR_TEMP_OFFSET)
+        return float(raw)
 
     @property
     def target_temperature(self) -> float:
@@ -341,22 +331,4 @@ class GreeClimateEntity(GreeEntity, ClimateEntity):
 
     def _handle_coordinator_update(self) -> None:
         """Update the state of the entity."""
-        units = self.coordinator.device.temperature_units
-        if (
-            units == TemperatureUnits.C
-            and self._attr_temperature_unit != UnitOfTemperature.CELSIUS
-        ):
-            _LOGGER.debug("Setting temperature unit to Celsius")
-            self._attr_temperature_unit = UnitOfTemperature.CELSIUS
-            self._attr_min_temp = TEMP_MIN
-            self._attr_max_temp = TEMP_MAX
-        elif (
-            units == TemperatureUnits.F
-            and self._attr_temperature_unit != UnitOfTemperature.FAHRENHEIT
-        ):
-            _LOGGER.debug("Setting temperature unit to Fahrenheit")
-            self._attr_temperature_unit = UnitOfTemperature.FAHRENHEIT
-            self._attr_min_temp = TEMP_MIN_F
-            self._attr_max_temp = TEMP_MAX_F
-
         super()._handle_coordinator_update()
