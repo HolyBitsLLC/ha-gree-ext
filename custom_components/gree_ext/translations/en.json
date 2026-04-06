@@ -53,6 +53,14 @@
         "name": "Outdoor Coil Temperature"
       }
     },
+    "select": {
+      "vertical_swing": {
+        "name": "Vertical Vane Position"
+      },
+      "horizontal_swing": {
+        "name": "Horizontal Vane Position"
+      }
+    },
     "switch": {
       "light": {
         "name": "Panel Light"

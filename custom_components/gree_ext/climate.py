@@ -14,9 +14,11 @@ from greeclimate.device import (
     TEMP_MAX_F,
     TEMP_MIN,
     TEMP_MIN_F,
+    TEMP_OFFSET as GR_TEMP_OFFSET,
     FanSpeed,
     HorizontalSwing,
     Mode,
+    Props,
     TemperatureUnits,
     VerticalSwing,
 )
@@ -140,9 +142,34 @@ class GreeClimateEntity(GreeEntity, ClimateEntity):
         self._attr_unique_id = coordinator.device.device_info.mac
 
     @property
-    def current_temperature(self) -> float:
-        """Return the reported current temperature for the device."""
-        return self.coordinator.device.current_temperature
+    def current_temperature(self) -> float | None:
+        """Return the reported current temperature for the device.
+
+        Overrides greeclimate's own value because some firmware versions
+        report a v4-style hid string but still encode TemSen with the +40
+        offset.  We apply a reliable heuristic: any raw value >= 40 is
+        assumed to use the offset convention (no room is realistically 40 °C).
+        """
+        device = self.coordinator.device
+        raw = device.get_property(Props.TEMP_SENSOR)
+        if raw is None or raw == 0:
+            return device.target_temperature
+
+        # Values >= TEMP_OFFSET always use the +40 convention.
+        if raw >= GR_TEMP_OFFSET:
+            celsius = raw - GR_TEMP_OFFSET
+        else:
+            celsius = raw
+
+        # If the unit is set to Fahrenheit, convert via greeclimate's table.
+        if device.temperature_units == TemperatureUnits.F.value:
+            bit = device.get_property(Props.TEMP_BIT) or 0
+            try:
+                return device._convert_to_units(celsius, bit)
+            except (ValueError, StopIteration):
+                pass
+
+        return float(celsius)
 
     @property
     def target_temperature(self) -> float:

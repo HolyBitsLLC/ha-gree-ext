@@ -84,7 +84,6 @@ GREE_SWITCHES: tuple[GreeSwitchEntityDescription, ...] = (
         translation_key="health_mode",
         get_value_fn=lambda d: d.anion,
         set_value_fn=_set_anion,
-        entity_registry_enabled_default=False,
     ),
 )
 
