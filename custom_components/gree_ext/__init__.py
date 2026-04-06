@@ -13,9 +13,11 @@ All communication is local UDP on port 7000.
 from __future__ import annotations
 
 from datetime import timedelta
+from ipaddress import IPv4Address
 import logging
 
 from greeclimate.device import Device, DeviceInfo
+from greeclimate.discovery import Discovery
 from greeclimate.exceptions import DeviceNotBoundError, DeviceTimeoutError
 
 from homeassistant.components.network import async_get_ipv4_broadcast_addresses
@@ -44,21 +46,58 @@ PLATFORMS = [
 ]
 
 
+async def _scan_device_by_ip(
+    ip: str, timeout: int = 5
+) -> DeviceInfo | None:
+    """Send a unicast scan to a specific IP and return proper DeviceInfo.
+
+    Uses the greeclimate Discovery engine to send a ``{"t":"scan"}`` packet
+    directly to the given IP address.  The device replies with its real MAC,
+    name, brand, model, and firmware version — all of which are captured in
+    the returned DeviceInfo.
+    """
+    disc = Discovery(timeout)
+    try:
+        devices = await disc.scan(
+            wait_for=timeout, bcast_ifaces=[IPv4Address(ip)]
+        )
+    except Exception:  # noqa: BLE001
+        _LOGGER.debug("Unicast scan failed for %s", ip, exc_info=True)
+        devices = []
+    finally:
+        try:
+            disc.close()
+        except Exception:  # noqa: BLE001
+            pass
+
+    return devices[0] if devices else None
+
+
 async def _bind_manual_device(
     hass: HomeAssistant,
     entry: GreeExtConfigEntry,
     ip: str,
     port: int = 7000,
 ) -> None:
-    """Bind to a manually-configured device by IP and register it."""
+    """Discover, bind, and register a manually-configured device by IP."""
     # Check if we already have this IP registered
     for coord in entry.runtime_data.coordinators:
         if coord.device.device_info.ip == ip:
             _LOGGER.debug("Device at %s already registered, skipping", ip)
             return
 
-    _LOGGER.info("Attempting direct bind to Gree device at %s:%d", ip, port)
-    info = DeviceInfo(ip, port, "unknown", "unknown")
+    _LOGGER.info("Scanning for Gree device at %s", ip)
+    info = await _scan_device_by_ip(ip)
+    if info is None:
+        _LOGGER.error(
+            "No scan response from Gree device at %s — is the device powered on?",
+            ip,
+        )
+        return
+
+    _LOGGER.info(
+        "Discovered Gree device at %s: %s (mac=%s)", ip, info.name, info.mac
+    )
     device = Device(info, timeout=120, bind_timeout=10)
 
     try:

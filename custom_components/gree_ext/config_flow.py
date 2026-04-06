@@ -6,7 +6,6 @@ devices on different VLANs or behind firewalls that block broadcast.
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from typing import Any
 
@@ -38,40 +37,37 @@ async def _try_bind(ip: str, port: int = 7000, timeout: int = 10) -> DeviceInfo 
 
     Returns DeviceInfo on success, None on failure.
     """
+    from ipaddress import IPv4Address
+
     from greeclimate.discovery import Discovery
 
-    found: list[DeviceInfo] = []
-
-    class _Collector:
-        async def device_found(self, device_info: DeviceInfo) -> None:
-            found.append(device_info)
-
-        async def device_update(self, device_info: DeviceInfo) -> None:
-            pass
-
     disc = Discovery(timeout)
-    collector = _Collector()
-    disc.add_listener(collector)
-
     try:
-        await disc.scan(0, bcast_ifaces=[ip])
-        # Give the device a moment to respond
-        await asyncio.sleep(3)
+        devices = await disc.scan(
+            wait_for=min(timeout, 5), bcast_ifaces=[IPv4Address(ip)]
+        )
     except Exception:  # noqa: BLE001
         _LOGGER.debug("Scan failed for %s", ip, exc_info=True)
+        devices = []
+    finally:
+        try:
+            disc.close()
+        except Exception:  # noqa: BLE001
+            pass
 
-    if found:
-        return found[0]
+    if not devices:
+        _LOGGER.debug("No scan response from %s", ip)
+        return None
 
-    # Fallback: try direct bind with a synthetic DeviceInfo
-    _LOGGER.debug("Broadcast scan got no response from %s, trying direct bind", ip)
-    info = DeviceInfo(ip, port, "unknown", "unknown")
+    info = devices[0]
+
+    # Verify we can actually bind to the device.
     device = Device(info, timeout=timeout, bind_timeout=5)
     try:
         await device.bind()
         return device.device_info
     except (DeviceNotBoundError, DeviceTimeoutError, OSError):
-        _LOGGER.debug("Direct bind also failed for %s", ip)
+        _LOGGER.debug("Bind failed for %s after successful scan", ip)
     finally:
         device.close()
 
