@@ -23,7 +23,6 @@ from greeclimate.exceptions import DeviceNotBoundError, DeviceTimeoutError
 from homeassistant.components.network import async_get_ipv4_broadcast_addresses
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.dispatcher import async_dispatcher_send
 from homeassistant.helpers.event import async_track_time_interval
 
 from .config_flow import CONF_IP_ADDRESSES
@@ -119,7 +118,6 @@ async def _bind_manual_device(
     coordo = DeviceDataUpdateCoordinator(hass, entry, device)
     entry.runtime_data.coordinators.append(coordo)
     await coordo.async_refresh()
-    async_dispatcher_send(hass, DISPATCH_DEVICE_DISCOVERED, coordo)
 
 
 async def async_setup_entry(
@@ -141,6 +139,10 @@ async def async_setup_entry(
         bcast_addr = list(await async_get_ipv4_broadcast_addresses(hass))
         await gree_discovery.discovery.scan(0, bcast_ifaces=bcast_addr)
 
+    # Set up platforms FIRST so signal listeners are connected before
+    # broadcast responses arrive and trigger DISPATCH_DEVICE_DISCOVERED.
+    await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+
     _LOGGER.debug("Scanning network for Gree devices")
     await _async_scan_update()
 
@@ -151,8 +153,6 @@ async def async_setup_entry(
             timedelta(seconds=DISCOVERY_SCAN_INTERVAL),
         )
     )
-
-    await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
     # Register custom services (force_fan_off).
     await async_setup_services(hass)

@@ -96,9 +96,15 @@ async def async_setup_entry(
 ) -> None:
     """Set up the Gree HVAC device from a config entry."""
 
+    added_macs: set[str] = set()
+
     @callback
     def init_device(coordinator: DeviceDataUpdateCoordinator) -> None:
         """Register the device."""
+        mac = coordinator.device.device_info.mac
+        if mac in added_macs:
+            return
+        added_macs.add(mac)
         async_add_entities([GreeClimateEntity(coordinator)])
 
     for coordinator in entry.runtime_data.coordinators:

@@ -86,12 +86,15 @@ class DeviceDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             always_update=False,
         )
         self.device = device
-        self.device.add_handler(Response.DATA, self.device_state_updated)
-        self.device.add_handler(Response.RESULT, self.device_state_updated)
+        self.device.add_handler(Response.DATA, self._on_device_response)
+        self.device.add_handler(Response.RESULT, self._on_device_response)
 
         self._error_count: int = 0
         self._last_response_time: datetime = utcnow()
         self._last_error_time: datetime | None = None
+
+        # Signalled when the device responds to a status request.
+        self._response_received: asyncio.Event = asyncio.Event()
 
         # Extended properties stored separately so they don't collide with
         # greeclimate's internal _properties dict.
@@ -100,26 +103,29 @@ class DeviceDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # Detected firmware style.  None = not yet determined.
         self._firmware_is_v4: bool | None = None
 
-    def device_state_updated(self, *args: Any) -> None:
-        """Handle device state updates."""
-        _LOGGER.debug("Device state updated: %s", json_dumps(args))
+    def _on_device_response(self, *args: Any) -> None:
+        """Handle raw protocol responses from the device."""
+        _LOGGER.debug("Device response received: %s", json_dumps(args))
         self._error_count = 0
         self._last_response_time = utcnow()
-        self.async_set_updated_data(self.device.raw_properties)
+        self._response_received.set()
 
     async def _async_update_data(self) -> dict[str, Any]:
         """Update the state of the device.
 
         Sends a SINGLE combined status request that includes both the
         standard greeclimate properties AND our extended properties
-        (compressor freq, coil temps).  This avoids the timing issues of
-        sending two separate requests.
+        (compressor freq, coil temps).  Uses an asyncio.Event to wait for
+        the actual response before extracting extended properties, ensuring
+        entities see consistent data.
         """
         _LOGGER.debug(
             "Updating device state: %s, error count: %d",
             self.name,
             self._error_count,
         )
+
+        self._response_received.clear()
 
         try:
             if not self.device.device_cipher:
@@ -152,10 +158,21 @@ class DeviceDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     f"Device {self.name} is unavailable, could not send update request"
                 ) from error
         else:
-            # Wait for the device to respond.  The response fires
-            # handle_state_update synchronously within datagram_received,
-            # which updates device._properties.
-            await asyncio.sleep(1)
+            # Wait for the device to actually respond.
+            try:
+                await asyncio.wait_for(
+                    self._response_received.wait(), timeout=10
+                )
+            except asyncio.TimeoutError:
+                self._error_count += 1
+                _LOGGER.warning(
+                    "Device %s did not respond within 10 seconds",
+                    self.name,
+                )
+                if self.last_update_success and self._error_count >= MAX_ERRORS:
+                    raise UpdateFailed(
+                        f"Device {self.name} is unresponsive"
+                    )
 
             now = utcnow()
             elapsed_success = now - self._last_response_time
@@ -167,27 +184,24 @@ class DeviceDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 ):
                     self._last_error_time = now
                     self._error_count += 1
-
-                _LOGGER.warning(
-                    "Device %s took an unusually long time to respond, %s seconds",
-                    self.name,
-                    elapsed_success,
-                )
             else:
                 self._error_count = 0
-            if self.last_update_success and self._error_count >= MAX_ERRORS:
-                raise UpdateFailed(
-                    f"Device {self.name} is unresponsive for too long and now unavailable"
-                )
 
         self._last_response_time = utcnow()
 
-        # Extract extended properties from the combined response.
-        # greeclimate's handle_state_update stores ALL received key-value
-        # pairs in device._properties, so our extended properties are there.
+        # Extract extended properties from the combined response BEFORE
+        # returning, so entities see consistent data in this update cycle.
         self._extract_extended_from_raw()
 
-        return copy.deepcopy(self.device.raw_properties)
+        raw = self.device.raw_properties
+        _LOGGER.debug(
+            "Raw properties for %s: %s | Extended: %s",
+            self.name,
+            raw,
+            self.extended_properties,
+        )
+
+        return copy.deepcopy(raw)
 
     def _extract_extended_from_raw(self) -> None:
         """Pull extended property values from raw_properties after update.
