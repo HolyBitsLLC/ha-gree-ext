@@ -3,11 +3,34 @@
     "step": {
       "user": {
         "title": "Gree Climate Extended",
-        "description": "This integration discovers Gree/Tosot HVAC devices on your local network via UDP broadcast. Press Submit to begin discovery."
+        "description": "Enter the IP address(es) of your Gree/Tosot HVAC device(s). Separate multiple IPs with commas. Leave blank to use auto-discovery only.",
+        "data": {
+          "ip_addresses": "Device IP address(es)"
+        },
+        "data_description": {
+          "ip_addresses": "e.g. 192.168.1.100 or 10.0.12.50, 10.0.12.51"
+        }
       }
+    },
+    "error": {
+      "cannot_connect": "Could not connect to the device. Verify the IP and that UDP port 7000 is reachable."
     },
     "abort": {
       "single_instance_allowed": "Only a single instance of Gree Climate Extended is allowed."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Gree Device IPs",
+        "description": "Update the IP address(es) of your Gree/Tosot devices. Separate multiple with commas.",
+        "data": {
+          "ip_addresses": "Device IP address(es)"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Could not connect to the device at that IP."
     }
   },
   "entity": {
