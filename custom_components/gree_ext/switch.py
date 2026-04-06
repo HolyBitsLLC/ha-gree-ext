@@ -54,6 +54,17 @@ def _set_anion(device: Device, value: bool) -> None:
     device.anion = value
 
 
+def _get_beep(device: Device) -> bool:
+    val = device.raw_properties.get("Bwt")
+    return bool(val) if val is not None else True
+
+
+def _set_beep(device: Device, value: bool) -> None:
+    device._properties["Bwt"] = int(value)
+    if "Bwt" not in device._dirty:
+        device._dirty.append("Bwt")
+
+
 GREE_SWITCHES: tuple[GreeSwitchEntityDescription, ...] = (
     GreeSwitchEntityDescription(
         key="Panel Light",
@@ -84,6 +95,12 @@ GREE_SWITCHES: tuple[GreeSwitchEntityDescription, ...] = (
         translation_key="health_mode",
         get_value_fn=lambda d: d.anion,
         set_value_fn=_set_anion,
+    ),
+    GreeSwitchEntityDescription(
+        key="Beep",
+        translation_key="beep",
+        get_value_fn=_get_beep,
+        set_value_fn=_set_beep,
     ),
 )
 

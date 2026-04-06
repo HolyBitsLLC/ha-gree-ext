@@ -76,6 +76,9 @@
       },
       "health_mode": {
         "name": "Health Mode"
+      },
+      "beep": {
+        "name": "Beep"
       }
     }
   }
