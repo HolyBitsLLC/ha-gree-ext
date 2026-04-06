@@ -100,12 +100,33 @@ class DeviceDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # greeclimate's internal _properties dict.
         self.extended_properties: dict[str, Any] = {}
 
+        # Most recent key/value pairs seen on protocol responses.
+        self._last_packet_properties: dict[str, Any] = {}
+
         # Detected firmware style.  None = not yet determined.
         self._firmware_is_v4: bool | None = None
 
     def _on_device_response(self, *args: Any) -> None:
         """Handle raw protocol responses from the device."""
         _LOGGER.debug("Device response received: %s", json_dumps(args))
+
+        for arg in args:
+            if not isinstance(arg, dict):
+                continue
+            pack = arg.get("pack")
+            if not isinstance(pack, dict):
+                continue
+
+            cols = pack.get("cols")
+            dat = pack.get("dat")
+            if isinstance(cols, list) and isinstance(dat, list):
+                self._last_packet_properties.update(dict(zip(cols, dat)))
+
+            opt = pack.get("opt")
+            val = pack.get("val")
+            if isinstance(opt, list) and isinstance(val, list):
+                self._last_packet_properties.update(dict(zip(opt, val)))
+
         self._error_count = 0
         self._last_response_time = utcnow()
         self._response_received.set()
@@ -126,22 +147,15 @@ class DeviceDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         )
 
         self._response_received.clear()
+        self._last_packet_properties.clear()
 
         try:
             if not self.device.device_cipher:
                 await self.device.bind()
 
-            # Build a combined property list: standard + extended.
-            props = [x.value for x in Props]
-            if not self.device.hid:
-                props.append("hid")
-            props.extend(EXTENDED_PROPERTIES)
-
-            await self.device.send(
-                self.device.create_status_message(
-                    self.device.device_info, *props
-                )
-            )
+            # Keep the standard update path identical to upstream greeclimate
+            # for maximum compatibility across firmware variants.
+            await self.device.update_state()
         except DeviceNotBoundError as error:
             raise UpdateFailed(
                 f"Device {self.name} is unavailable, device is not bound."
@@ -189,9 +203,11 @@ class DeviceDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
         self._last_response_time = utcnow()
 
-        # Extract extended properties from the combined response BEFORE
-        # returning, so entities see consistent data in this update cycle.
-        self._extract_extended_from_raw()
+        # First try extracting from standard raw properties and the packet map.
+        self._extract_extended_from_sources()
+
+        # If still missing values, run targeted status probes for extended keys.
+        await self._refresh_extended_properties()
 
         raw = self.device.raw_properties
         _LOGGER.debug(
@@ -203,18 +219,63 @@ class DeviceDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
         return copy.deepcopy(raw)
 
-    def _extract_extended_from_raw(self) -> None:
-        """Pull extended property values from raw_properties after update.
+    async def _refresh_extended_properties(self) -> None:
+        """Poll extended keys in small compatible batches.
 
-        After a combined status request, the device's response includes both
-        standard and extended properties in _properties.  Extract and normalise
-        the extended ones into self.extended_properties.
+        Some firmware variants return incomplete payloads when too many unknown
+        properties are requested at once. Requesting in targeted batches is
+        slower but much more reliable.
         """
+        probes: list[list[str]] = [
+            PROP_COMP_FREQ_ALIASES,
+            PROP_INDOOR_COIL_ALIASES,
+            PROP_OUTDOOR_COIL_ALIASES,
+            ["Bwt"],
+        ]
+
+        for props in probes:
+            self._response_received.clear()
+            self._last_packet_properties.clear()
+            try:
+                await self.device.send(
+                    self.device.create_status_message(
+                        self.device.device_info, *props
+                    )
+                )
+            except DeviceTimeoutError:
+                continue
+
+            try:
+                await asyncio.wait_for(self._response_received.wait(), timeout=2)
+            except asyncio.TimeoutError:
+                continue
+
+            self._extract_extended_from_sources()
+
+            if (
+                self.extended_properties.get(PROP_COMP_FREQ) is not None
+                and self.extended_properties.get(PROP_INDOOR_COIL_TEMP)
+                is not None
+                and self.extended_properties.get(PROP_OUTDOOR_COIL_TEMP)
+                is not None
+            ):
+                break
+
+    def _extract_extended_from_sources(self) -> None:
+        """Extract extended keys from both internal state and raw packet map."""
         raw = self.device.raw_properties
-        if not raw:
+        merged = {}
+        if raw:
+            merged.update(raw)
+        if self._last_packet_properties:
+            merged.update(self._last_packet_properties)
+        if not merged:
             return
 
-        normalised = self._normalise_aliases(raw)
+        normalised = self._normalise_aliases(merged)
+        if "Bwt" in merged and merged.get("Bwt") is not None:
+            normalised["Bwt"] = merged["Bwt"]
+
         if normalised:
             self.extended_properties.update(normalised)
             self._detect_firmware_version(normalised)
