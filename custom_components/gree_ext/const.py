@@ -36,12 +36,39 @@ PROP_OUTDOOR_COIL_TEMP = "TemOutlet"
 # Temperature offset used by firmware versions < 4.0.
 TEMP_OFFSET = 40
 
+# Firmware version detection threshold.  greeclimate uses a heuristic:
+# if TemSen (room temp sensor) reports a value < TEMP_OFFSET the firmware
+# is "new style" (>= 4.0) and values are already in °C.  Otherwise the
+# raw value has a +40 offset.  We apply the same heuristic to our coil
+# temperature properties.  A coil temp below this threshold is certainly
+# already in °C; above it, we subtract the offset.
+#
+# Note: greeclimate may also set device.version = "4.0" dynamically after
+# the first TemSen read.  We honour that too as a secondary signal.
+FW_V4_VERSION_PREFIX = "4"
+
 # Complete list of extended property names to request.
-EXTENDED_PROPERTIES: list[str] = [
-    PROP_COMP_FREQ,
-    PROP_INDOOR_COIL_TEMP,
-    PROP_OUTDOOR_COIL_TEMP,
-]
+EXTENDED_PROPERTIES: list[str] = []
+
+# Some firmware variants use different property names for the same data.
+# We request ALL known variants; the device will simply ignore names it
+# doesn't recognise and omit them from the response.
+
+# Compressor frequency — known aliases across firmware families.
+PROP_COMP_FREQ_ALIASES: list[str] = ["CompFreq", "CompFre"]
+
+# Indoor coil (evaporator) temperature — known aliases.
+PROP_INDOOR_COIL_ALIASES: list[str] = ["TemInlet", "ICoilT", "TemPipe"]
+
+# Outdoor coil (condenser) temperature — known aliases.
+PROP_OUTDOOR_COIL_ALIASES: list[str] = ["TemOutlet", "OCoilT", "OutPipe"]
+
+# Build the master request list from all alias groups.
+EXTENDED_PROPERTIES = (
+    PROP_COMP_FREQ_ALIASES
+    + PROP_INDOOR_COIL_ALIASES
+    + PROP_OUTDOOR_COIL_ALIASES
+)
 
 # Service name
 SERVICE_FORCE_FAN_OFF = "force_fan_off"

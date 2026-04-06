@@ -20,6 +20,9 @@
       }
     },
     "sensor": {
+      "compressor_frequency": {
+        "name": "Compressor Frequency"
+      },
       "indoor_coil_temp": {
         "name": "Indoor Coil Temperature"
       },

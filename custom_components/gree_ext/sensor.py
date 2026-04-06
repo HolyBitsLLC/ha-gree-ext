@@ -16,13 +16,14 @@ from homeassistant.components.sensor import (
     SensorEntityDescription,
     SensorStateClass,
 )
-from homeassistant.const import UnitOfTemperature
+from homeassistant.const import UnitOfFrequency, UnitOfTemperature
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
 from .const import (
     DISPATCH_DEVICE_DISCOVERED,
+    PROP_COMP_FREQ,
     PROP_INDOOR_COIL_TEMP,
     PROP_OUTDOOR_COIL_TEMP,
     TEMP_OFFSET,
@@ -45,6 +46,7 @@ async def async_setup_entry(
         """Register sensor entities for a discovered device."""
         async_add_entities(
             [
+                GreeCompressorFrequencySensor(coordinator),
                 GreeCoilTemperatureSensor(
                     coordinator=coordinator,
                     description=SensorEntityDescription(
@@ -105,7 +107,17 @@ class GreeCoilTemperatureSensor(GreeEntity, SensorEntity):
 
     @property
     def native_value(self) -> float | None:
-        """Return the coil temperature in °C."""
+        """Return the coil temperature in °C.
+
+        Supports both firmware conventions:
+          - FW < 4.0: raw value has +40 offset (e.g. 65 → 25°C)
+          - FW >= 4.0: raw value IS the temperature in °C
+
+        Detection is handled by the coordinator's firmware_is_v4 property
+        which uses multiple signals (device.version from hid, heuristic on
+        raw temp values).  If detection hasn't happened yet, falls back to
+        the heuristic inline.
+        """
         raw = self.coordinator.extended_properties.get(self._prop_name)
         if raw is None:
             return None
@@ -114,15 +126,40 @@ class GreeCoilTemperatureSensor(GreeEntity, SensorEntity):
         if raw == 0:
             return None
 
-        # Apply the same offset logic as greeclimate's current_temperature.
-        version = self.coordinator.device.version
-        v_major = 0
-        if version:
-            try:
-                v_major = int(version.split(".")[0])
-            except (ValueError, IndexError):
-                pass
+        fw_v4 = self.coordinator.firmware_is_v4
+        if fw_v4 is True:
+            return float(raw)
+        if fw_v4 is False:
+            return float(raw - TEMP_OFFSET)
 
-        if v_major >= 4:
+        # firmware_is_v4 is None — detection hasn't run yet.
+        # Apply the same inline heuristic: values < offset are raw °C.
+        if raw < TEMP_OFFSET:
             return float(raw)
         return float(raw - TEMP_OFFSET)
+
+
+class GreeCompressorFrequencySensor(GreeEntity, SensorEntity):
+    """Numeric sensor exposing the compressor frequency in Hz.
+
+    Complements the binary compressor_active sensor with the actual
+    frequency value for use in automations and dashboards.
+    """
+
+    _attr_device_class = SensorDeviceClass.FREQUENCY
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_native_unit_of_measurement = UnitOfFrequency.HERTZ
+    _attr_translation_key = "compressor_frequency"
+    _attr_suggested_display_precision = 0
+
+    def __init__(self, coordinator: DeviceDataUpdateCoordinator) -> None:
+        """Initialize the compressor frequency sensor."""
+        super().__init__(coordinator, "compressor_frequency")
+
+    @property
+    def native_value(self) -> int | None:
+        """Return the compressor frequency in Hz."""
+        freq = self.coordinator.extended_properties.get(PROP_COMP_FREQ)
+        if freq is None:
+            return None
+        return int(freq)

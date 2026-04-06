@@ -33,8 +33,16 @@ from .const import (
     DISPATCH_DEVICE_DISCOVERED,
     DOMAIN,
     EXTENDED_PROPERTIES,
+    FW_V4_VERSION_PREFIX,
     MAX_ERRORS,
     MAX_EXPECTED_RESPONSE_TIME_INTERVAL,
+    PROP_COMP_FREQ,
+    PROP_COMP_FREQ_ALIASES,
+    PROP_INDOOR_COIL_ALIASES,
+    PROP_INDOOR_COIL_TEMP,
+    PROP_OUTDOOR_COIL_ALIASES,
+    PROP_OUTDOOR_COIL_TEMP,
+    TEMP_OFFSET,
     UPDATE_INTERVAL,
 )
 
@@ -86,6 +94,9 @@ class DeviceDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # Extended properties stored separately so they don't collide with
         # greeclimate's internal _properties dict.
         self.extended_properties: dict[str, Any] = {}
+
+        # Detected firmware style.  None = not yet determined.
+        self._firmware_is_v4: bool | None = None
 
     def device_state_updated(self, *args: Any) -> None:
         """Handle device state updates."""
@@ -184,10 +195,15 @@ class DeviceDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 self.device.remove_handler(Response.DATA, _capture_extended)
 
             if captured:
-                self.extended_properties.update(captured)
+                # Normalise alias names to canonical keys so consumers
+                # don't need to know which alias the device responded with.
+                normalised = self._normalise_aliases(captured)
+                self.extended_properties.update(normalised)
+                self._detect_firmware_version(normalised)
                 _LOGGER.debug(
-                    "Extended properties for %s: %s",
+                    "Extended properties for %s (fw_v4=%s): %s",
                     self.name,
+                    self._firmware_is_v4,
                     self.extended_properties,
                 )
         except (DeviceTimeoutError, DeviceNotBoundError):
@@ -201,6 +217,71 @@ class DeviceDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 self.name,
                 exc_info=True,
             )
+
+    @staticmethod
+    def _normalise_aliases(raw: dict[str, Any]) -> dict[str, Any]:
+        """Map firmware-specific property names to canonical keys.
+
+        Different firmware versions use different names for the same data.
+        We normalise to the canonical names defined in const.py so that
+        sensor entities can use a single key.
+        """
+        result: dict[str, Any] = {}
+        for alias in PROP_COMP_FREQ_ALIASES:
+            if alias in raw and raw[alias] is not None:
+                result[PROP_COMP_FREQ] = raw[alias]
+                break
+        for alias in PROP_INDOOR_COIL_ALIASES:
+            if alias in raw and raw[alias] is not None:
+                result[PROP_INDOOR_COIL_TEMP] = raw[alias]
+                break
+        for alias in PROP_OUTDOOR_COIL_ALIASES:
+            if alias in raw and raw[alias] is not None:
+                result[PROP_OUTDOOR_COIL_TEMP] = raw[alias]
+                break
+        return result
+
+    def _detect_firmware_version(self, props: dict[str, Any]) -> None:
+        """Auto-detect firmware temperature convention.
+
+        Uses the same heuristic as greeclimate's handle_state_update:
+        if a temperature value is below TEMP_OFFSET (40) the firmware
+        reports raw °C ("v4 style").  Also checks device.version if
+        greeclimate already identified the firmware from the hid string.
+        """
+        # If greeclimate already tagged the firmware, trust that.
+        ver = self.device.version
+        if ver:
+            try:
+                if int(ver.split(".")[0]) >= 4:
+                    self._firmware_is_v4 = True
+                    return
+            except (ValueError, IndexError):
+                pass
+
+        # Heuristic: check coil temps.  If either is non-zero and < offset,
+        # the device is reporting raw °C.
+        for key in (PROP_INDOOR_COIL_TEMP, PROP_OUTDOOR_COIL_TEMP):
+            val = props.get(key)
+            if val is not None:
+                val = int(val)
+                if 0 < val < TEMP_OFFSET:
+                    self._firmware_is_v4 = True
+                    _LOGGER.info(
+                        "Detected v4-style firmware for %s (raw coil temp %d < %d)",
+                        self.name,
+                        val,
+                        TEMP_OFFSET,
+                    )
+                    return
+                if val >= TEMP_OFFSET:
+                    self._firmware_is_v4 = False
+                    return
+
+    @property
+    def firmware_is_v4(self) -> bool | None:
+        """Return True if firmware uses raw °C (v4+), False if +40 offset, None if unknown."""
+        return self._firmware_is_v4
 
     async def push_state_update(self) -> None:
         """Send state updates to the physical device."""

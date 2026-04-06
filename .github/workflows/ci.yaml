@@ -1,0 +1,43 @@
+name: CI
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  lint:
+    runs-on: [self-hosted, linux, x64, krubecible, holybits-shared]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install ruff
+      - run: ruff check .
+
+  test:
+    runs-on: [self-hosted, linux, x64, krubecible, holybits-shared]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements-dev.txt
+      - run: pytest --cov=custom_components/gree_ext --cov-report=xml tests/
+      - uses: codecov/codecov-action@v4
+        if: always()
+
+  validate:
+    runs-on: [self-hosted, linux, x64, krubecible, holybits-shared]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Validate manifest
+        run: python -c "import json; json.load(open('custom_components/gree_ext/manifest.json'))"
+      - name: Validate strings
+        run: python -c "import json; json.load(open('custom_components/gree_ext/strings.json'))"
+      - name: Validate services
+        run: pip install pyyaml && python -c "import yaml; yaml.safe_load(open('custom_components/gree_ext/services.yaml'))"
