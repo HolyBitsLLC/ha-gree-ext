@@ -1,0 +1,48 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Gree Climate Extended",
+        "description": "This integration discovers Gree/Tosot HVAC devices on your local network via UDP broadcast. Press Submit to begin discovery."
+      }
+    },
+    "abort": {
+      "single_instance_allowed": "Only a single instance of Gree Climate Extended is allowed."
+    }
+  },
+  "entity": {
+    "binary_sensor": {
+      "compressor_active": {
+        "name": "Compressor Active"
+      },
+      "idle": {
+        "name": "Idle"
+      }
+    },
+    "sensor": {
+      "indoor_coil_temp": {
+        "name": "Indoor Coil Temperature"
+      },
+      "outdoor_coil_temp": {
+        "name": "Outdoor Coil Temperature"
+      }
+    },
+    "switch": {
+      "light": {
+        "name": "Panel Light"
+      },
+      "quiet": {
+        "name": "Quiet"
+      },
+      "fresh_air": {
+        "name": "Fresh Air"
+      },
+      "xfan": {
+        "name": "XFan"
+      },
+      "health_mode": {
+        "name": "Health Mode"
+      }
+    }
+  }
+}

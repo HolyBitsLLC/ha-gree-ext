@@ -1,0 +1,18 @@
+force_fan_off:
+  name: Force Fan Off
+  description: >-
+    Immediately powers off the Gree/Tosot HVAC unit to stop the fan.
+    Use this when the compressor has stopped but the fan continues to run.
+    The unit can be re-enabled afterwards by an automation or manually.
+  fields:
+    entity_id:
+      name: Entity
+      description: >-
+        One or more climate entity IDs to target.  If omitted, ALL discovered
+        Gree devices are turned off.
+      required: false
+      example: "climate.gree_ext_living_room"
+      selector:
+        entity:
+          integration: gree_ext
+          domain: climate

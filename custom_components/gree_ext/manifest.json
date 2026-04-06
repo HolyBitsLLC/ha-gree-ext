@@ -1,0 +1,13 @@
+{
+  "domain": "gree_ext",
+  "name": "Gree Climate Extended",
+  "codeowners": ["@HolyBitsLLC"],
+  "config_flow": true,
+  "dependencies": ["network"],
+  "documentation": "https://github.com/HolyBitsLLC/ha-gree-ext",
+  "iot_class": "local_polling",
+  "issue_tracker": "https://github.com/HolyBitsLLC/ha-gree-ext/issues",
+  "loggers": ["greeclimate"],
+  "requirements": ["greeclimate==2.1.1"],
+  "version": "0.1.0"
+}
