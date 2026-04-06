@@ -48,9 +48,15 @@ async def async_setup_entry(
 ) -> None:
     """Set up Gree Extended binary sensors from a config entry."""
 
+    added_macs: set[str] = set()
+
     @callback
     def init_device(coordinator: DeviceDataUpdateCoordinator) -> None:
         """Register binary sensor entities for a discovered device."""
+        mac = coordinator.device.device_info.mac
+        if mac in added_macs:
+            return
+        added_macs.add(mac)
         async_add_entities(
             [
                 GreeCompressorActiveSensor(coordinator),
