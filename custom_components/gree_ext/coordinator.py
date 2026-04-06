@@ -310,6 +310,15 @@ class DiscoveryService(Listener):
 
     async def device_found(self, device_info: DeviceInfo) -> None:
         """Handle new device found on the network."""
+        # De-duplicate against devices already registered (e.g. manual IP binds).
+        for coord in self.entry.runtime_data.coordinators:
+            if coord.device.device_info.mac == device_info.mac:
+                _LOGGER.debug(
+                    "Device %s already registered, skipping duplicate discovery",
+                    device_info.mac,
+                )
+                return
+
         device = Device(device_info)
         try:
             await device.bind()
