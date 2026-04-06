@@ -209,6 +209,14 @@ class DeviceDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # If still missing values, run targeted status probes for extended keys.
         await self._refresh_extended_properties()
 
+        _LOGGER.warning(
+            "[gree_ext diag] %s final extended=%s raw_keys=%s packet_keys=%s",
+            self.name,
+            self.extended_properties,
+            sorted((self.device.raw_properties or {}).keys()),
+            sorted(self._last_packet_properties.keys()),
+        )
+
         raw = self.device.raw_properties
         _LOGGER.debug(
             "Raw properties for %s: %s | Extended: %s",
@@ -236,6 +244,11 @@ class DeviceDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         for props in probes:
             self._response_received.clear()
             self._last_packet_properties.clear()
+            _LOGGER.warning(
+                "[gree_ext diag] %s probe request props=%s",
+                self.name,
+                props,
+            )
             try:
                 await self.device.send(
                     self.device.create_status_message(
@@ -243,14 +256,31 @@ class DeviceDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     )
                 )
             except DeviceTimeoutError:
+                _LOGGER.warning(
+                    "[gree_ext diag] %s probe timeout props=%s",
+                    self.name,
+                    props,
+                )
                 continue
 
             try:
                 await asyncio.wait_for(self._response_received.wait(), timeout=2)
             except asyncio.TimeoutError:
+                _LOGGER.warning(
+                    "[gree_ext diag] %s probe no response props=%s",
+                    self.name,
+                    props,
+                )
                 continue
 
             self._extract_extended_from_sources()
+            _LOGGER.warning(
+                "[gree_ext diag] %s probe result props=%s packet=%s extended=%s",
+                self.name,
+                props,
+                self._last_packet_properties,
+                self.extended_properties,
+            )
 
             if (
                 self.extended_properties.get(PROP_COMP_FREQ) is not None
@@ -284,6 +314,13 @@ class DeviceDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 self.name,
                 self._firmware_is_v4,
                 self.extended_properties,
+            )
+        else:
+            _LOGGER.warning(
+                "[gree_ext diag] %s no extended aliases found; merged keys=%s values=%s",
+                self.name,
+                sorted(merged.keys()),
+                merged,
             )
 
     @staticmethod
