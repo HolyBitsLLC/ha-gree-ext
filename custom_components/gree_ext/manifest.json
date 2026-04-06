@@ -9,5 +9,5 @@
   "issue_tracker": "https://github.com/HolyBitsLLC/ha-gree-ext/issues",
   "loggers": ["greeclimate"],
   "requirements": ["greeclimate==2.1.1"],
-  "version": "0.2.0"
+  "version": "0.2.1"
 }
